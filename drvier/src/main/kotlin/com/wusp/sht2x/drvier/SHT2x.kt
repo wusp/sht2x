@@ -182,6 +182,7 @@ class SHT2x(val bus: String) : AutoCloseable {
     private suspend fun triggerNotHoldingMeasurement(command: ByteArray, delay: Long): ByteArray? {
         if (device == null) return null
         val result = ByteArray(3)
+        //trigger measurement
         device.write(command, 1)
         kotlinx.coroutines.experimental.delay(delay)
         device.read(result, 3)
@@ -194,11 +195,6 @@ class SHT2x(val bus: String) : AutoCloseable {
      */
     private fun responseCompleteness(datas: ByteArray): Boolean {
         if (datas.isEmpty() || datas.size != 3) {
-            if (datas.isEmpty()) {
-                Log.e(TAG, "response is empty.")
-            } else {
-                Log.e(TAG, "response.size is not 3")
-            }
             return false
         }
         return true
@@ -210,25 +206,27 @@ class SHT2x(val bus: String) : AutoCloseable {
      * can match the crc checksum.
      */
     private fun responseCorrectness(response: ByteArray, command: COMMAND): Boolean {
-        val lsbMatchBit = 0b00000010
-        if (command == COMMAND.TRIGGER_RH_MEASUREMENT_NOT_HOLD
-                || command == COMMAND.TRIGGER_RH_MEASUREMENT_HOLD
-                && response[1].and(lsbMatchBit.toByte()) == 0x00.toByte()) {
-            Log.e(TAG, "RH Command bit not match.")
-            return false
-        } else if (command == COMMAND.TRIGGER_T_MEASUREMENT_NOT_HOLD
-                || command == COMMAND.TRIGGER_T_MEASUREMENT_HOLD
-                && response[1].and(lsbMatchBit.toByte()) != 0x00.toByte()) {
-            Log.e(TAG, "T Command bit not match.")
+        if (response[2].toInt() == -1) {
+            Log.e(TAG, "Not checksum, the command has not been acked.")
             return false
         }
-        val checksum = crc8maxim(intArrayOf(response[0].toInt(), response[1].toInt()))
-        Log.e(TAG, "match result: " + (checksum.toByte() == response[2]))
+        val lsbMatchBit = 0b00000010.toByte()
+        if ((command == COMMAND.TRIGGER_RH_MEASUREMENT_NOT_HOLD
+                || command == COMMAND.TRIGGER_RH_MEASUREMENT_HOLD) && (response[1].and(lsbMatchBit).toInt() == 0x00)) {
+            Log.e(TAG, "humidity status bit error. LSB: " + response[1])
+            return false
+        } else if ((command == COMMAND.TRIGGER_T_MEASUREMENT_NOT_HOLD
+                || command == COMMAND.TRIGGER_T_MEASUREMENT_HOLD) && (response[1].and(lsbMatchBit).toInt() != 0x00)) {
+            Log.e(TAG, "temperature status bit error. LSB: " + response[1])
+            return false
+        }
+        val checksum = crc8maxim(byteArrayOf(response[0], response[1]))
         return checksum != null && checksum.toByte() == response[2]
     }
 
     /**
      * Calling this method to return the only data which would has adjusted the status value bit()
+     * @Todo Bug: 不能正确处理lsb为负的情况
      */
     private fun datasAdjust(response: ByteArray): ByteArray {
         val rollOutBit = 0b11111100
